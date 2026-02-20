@@ -62,6 +62,7 @@ async function fetchGoogleBooksRating(title, author) {
         stars: item.averageRating,
         pct: Math.round(item.averageRating * 20),
         count: item.ratingsCount || 0,
+        thumbnail: data.items?.[0]?.volumeInfo?.imageLinks?.thumbnail || null,
       };
     }
   } catch (e) {}
@@ -107,12 +108,9 @@ export default function BookWormz() {
         const parsed = parseCSV(text);
         setBooks(parsed);
         setLoading(false);
-        // Fetch Google Books ratings in background
-        const ratings = {};
         for (const book of parsed) {
           const rating = await fetchGoogleBooksRating(book.title, book.author);
           if (rating) {
-            ratings[book.title] = rating;
             setGoogleRatings(prev => ({ ...prev, [book.title]: rating }));
           }
         }
@@ -120,8 +118,11 @@ export default function BookWormz() {
       .catch(() => { setError("Couldn't load data from Google Sheets."); setLoading(false); });
   }, []);
 
+  const currentlyReading = books.filter(b => b.avg === null && b.don === null && b.dave === null && b.chan === null);
+  const finishedBooks = books.filter(b => b.avg !== null);
+
   const members = ["All", "Don", "Dave", "Chan"];
-  const sorted = [...books]
+  const sorted = [...finishedBooks]
     .filter(b => filter === "All" || b.picker === filter)
     .filter(b => b.title.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
@@ -130,10 +131,10 @@ export default function BookWormz() {
       return 0;
     });
 
-  const topBook = [...books].sort((a, b) => b.avg - a.avg)[0];
-  const avgAll = books.length ? (books.reduce((s, b) => s + (b.avg || 0), 0) / books.length).toFixed(1) : "—";
+  const topBook = [...finishedBooks].sort((a, b) => b.avg - a.avg)[0];
+  const avgAll = finishedBooks.length ? (finishedBooks.reduce((s, b) => s + (b.avg || 0), 0) / finishedBooks.length).toFixed(1) : "—";
   const pickerStats = ["Don", "Dave", "Chan"].map(name => {
-    const picked = books.filter(b => b.picker === name);
+    const picked = finishedBooks.filter(b => b.picker === name);
     const avg = picked.length ? (picked.reduce((s, b) => s + (b.avg || 0), 0) / picked.length).toFixed(1) : "—";
     return { name, count: picked.length, avg };
   });
@@ -152,6 +153,7 @@ export default function BookWormz() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#f7f4ef", fontFamily: "Georgia, serif", color: "#1a1a1a" }}>
+
       {/* Header */}
       <div style={{ background: "#1a1a2e", color: "white", padding: "40px 32px 32px", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 20px)" }} />
@@ -163,7 +165,7 @@ export default function BookWormz() {
               <h1 style={{ margin: 0, fontSize: 42, fontWeight: 700, letterSpacing: -1 }}>The Book Wormz</h1>
             </div>
           </div>
-          <p style={{ margin: "8px 0 24px", color: "#aaa", fontSize: 15 }}>Don · Dave · Chan — {books.length} books read and rated</p>
+          <p style={{ margin: "8px 0 24px", color: "#aaa", fontSize: 15 }}>Don · Dave · Chan — {finishedBooks.length} books read and rated</p>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px" }}>
               <div style={{ fontSize: 28, fontWeight: 700 }}>{avgAll}%</div>
@@ -184,6 +186,46 @@ export default function BookWormz() {
           </div>
         </div>
       </div>
+
+      {/* Currently Reading Banner */}
+      {currentlyReading.length > 0 && (
+        <div style={{ background: "linear-gradient(135deg, #1a1a2e 0%, #2d3561 100%)", borderBottom: "3px solid #f39c12" }}>
+          <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px" }}>
+            <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#f39c12", marginBottom: 16, fontWeight: 700 }}>
+              📖 Currently Reading
+            </div>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              {currentlyReading.map(book => {
+                const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
+                const gRating = googleRatings[book.title];
+                return (
+                  <div key={book.title} style={{ display: "flex", gap: 16, alignItems: "center", background: "rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 20px", flex: 1, minWidth: 280, border: "1px solid rgba(243,156,18,0.3)" }}>
+                    {gRating?.thumbnail && (
+                      <img src={gRating.thumbnail} alt={book.title} style={{ width: 52, height: 72, objectFit: "cover", borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", flexShrink: 0 }} />
+                    )}
+                    {!gRating?.thumbnail && (
+                      <div style={{ width: 52, height: 72, background: "rgba(255,255,255,0.1)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📗</div>
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "white", lineHeight: 1.2, marginBottom: 4 }}>{book.title}</div>
+                      {book.author && <div style={{ fontSize: 13, color: "#aaa", fontStyle: "italic", marginBottom: 8 }}>{book.author}</div>}
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
+                        {book.date && <span style={{ fontSize: 11, color: "#888" }}>Started {book.date}</span>}
+                        {gRating && <span style={{ fontSize: 11, color: "#f39c12", fontWeight: 600 }}>⭐ {gRating.stars} on Google Books</span>}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "center", flexShrink: 0 }}>
+                      <div style={{ fontSize: 28 }}>🐛</div>
+                      <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>In progress</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px 0" }}>
@@ -212,7 +254,7 @@ export default function BookWormz() {
             ))}
           </div>
         </div>
-        <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {books.length} books</div>
+        <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {finishedBooks.length} books</div>
       </div>
 
       {/* Grid */}
@@ -243,8 +285,6 @@ export default function BookWormz() {
                     <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
                     <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
                   </div>
-
-                  {/* Scores comparison */}
                   <div style={{ marginBottom: 14 }}>
                     <ScoreBar score={book.avg} name="🐛 Book Wormz" />
                     {gRating ? (
@@ -253,8 +293,6 @@ export default function BookWormz() {
                       <div style={{ fontSize: 11, color: "#ddd", marginBottom: 6 }}>📖 Google Books: loading...</div>
                     )}
                   </div>
-
-                  {/* Difference badge */}
                   {diff !== null && (
                     <div style={{
                       display: "inline-flex", alignItems: "center", gap: 4,
@@ -265,8 +303,6 @@ export default function BookWormz() {
                       {parseFloat(diff) >= 0 ? "▲" : "▼"} {Math.abs(diff)}% vs Google Books
                     </div>
                   )}
-
-                  {/* Individual scores */}
                   <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
                     <div style={{ fontSize: 10, color: "#bbb", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Individual Scores</div>
                     <ScoreBar score={book.don} name="Don" />
