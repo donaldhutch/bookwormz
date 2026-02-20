@@ -37,36 +37,41 @@ function parseCSV(text) {
       return parseFloat(val.replace("%", ""));
     };
     return {
-      title: row["Book Title"]?.trim(),
+      title:  row["Book Title"]?.trim(),
       author: row["Author"]?.trim(),
-      year: row["Year Published"]?.trim(),
+      year:   row["Year Published"]?.trim(),
       picker: row["Who Picked"]?.trim(),
-      date: row["Date Picked"]?.trim(),
-      don:  parseScore(row["Don Score"]),
-      dave: parseScore(row["Dave Score"]),
-      chan: parseScore(row["Chan Score"]),
-      avg:  parseScore(row["Average Score"]),
+      date:   row["Date Picked"]?.trim(),
+      don:    parseScore(row["Don Score"]),
+      dave:   parseScore(row["Dave Score"]),
+      chan:   parseScore(row["Chan Score"]),
+      avg:    parseScore(row["Average Score"]),
+      isbn:   row["ISBN"]?.trim() || null,
     };
   }).filter(b => b.title);
 }
 
-async function fetchGoogleBooksRating(title, author) {
-  const query = encodeURIComponent(`${title} ${author}`);
-  const url = `https://www.googleapis.com/books/v1/volumes?q=${query}&key=${GOOGLE_BOOKS_API_KEY}&maxResults=1`;
+async function fetchGoogleBooksData(isbn, title, author) {
+  let url;
+  if (isbn) {
+    url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${GOOGLE_BOOKS_API_KEY}`;
+  } else {
+    const query = encodeURIComponent(`${title} ${author}`);
+    url = `https://www.googleapis.com/books/v1/volumes?q=${query}&key=${GOOGLE_BOOKS_API_KEY}&maxResults=1`;
+  }
   try {
     const res = await fetch(url);
     const data = await res.json();
     const item = data.items?.[0]?.volumeInfo;
-    if (item?.averageRating) {
-      return {
-        stars: item.averageRating,
-        pct: Math.round(item.averageRating * 20),
-        count: item.ratingsCount || 0,
-        thumbnail: data.items?.[0]?.volumeInfo?.imageLinks?.thumbnail || null,
-      };
-    }
-  } catch (e) {}
-  return null;
+    if (!item) return null;
+    const rawThumb = item.imageLinks?.thumbnail || item.imageLinks?.smallThumbnail || null;
+    return {
+      stars:     item.averageRating || null,
+      pct:       item.averageRating ? Math.round(item.averageRating * 20) : null,
+      count:     item.ratingsCount || 0,
+      thumbnail: rawThumb ? rawThumb.replace("http://", "https://") : null,
+    };
+  } catch (e) { return null; }
 }
 
 const ScoreBar = ({ score, name, color }) => {
@@ -109,7 +114,7 @@ export default function BookWormz() {
         setBooks(parsed);
         setLoading(false);
         for (const book of parsed) {
-          const rating = await fetchGoogleBooksRating(book.title, book.author);
+          const rating = await fetchGoogleBooksData(book.isbn, book.title, book.author);
           if (rating) {
             setGoogleRatings(prev => ({ ...prev, [book.title]: rating }));
           }
@@ -178,9 +183,14 @@ export default function BookWormz() {
               </div>
             ))}
             {topBook && (
-              <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px", flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>🏆 {topBook.title}</div>
-                <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Top rated · {topBook.avg}%</div>
+              <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px", flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12 }}>
+                {googleRatings[topBook.title]?.thumbnail && (
+                  <img src={googleRatings[topBook.title].thumbnail} alt={topBook.title} style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.4)", flexShrink: 0 }} />
+                )}
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>🏆 {topBook.title}</div>
+                  <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Top rated · {topBook.avg}%</div>
+                </div>
               </div>
             )}
           </div>
@@ -200,10 +210,9 @@ export default function BookWormz() {
                 const gRating = googleRatings[book.title];
                 return (
                   <div key={book.title} style={{ display: "flex", gap: 16, alignItems: "center", background: "rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 20px", flex: 1, minWidth: 280, border: "1px solid rgba(243,156,18,0.3)" }}>
-                    {gRating?.thumbnail && (
+                    {gRating?.thumbnail ? (
                       <img src={gRating.thumbnail} alt={book.title} style={{ width: 52, height: 72, objectFit: "cover", borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", flexShrink: 0 }} />
-                    )}
-                    {!gRating?.thumbnail && (
+                    ) : (
                       <div style={{ width: 52, height: 72, background: "rgba(255,255,255,0.1)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📗</div>
                     )}
                     <div style={{ flex: 1 }}>
@@ -277,37 +286,66 @@ export default function BookWormz() {
                   transition: "all 0.2s"
                 }}>
                 <div style={{ height: 5, background: color.accent }} />
-                <div style={{ padding: "18px 20px 20px" }}>
-                  <h3 style={{ margin: "0 0 2px", fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{book.title}</h3>
-                  {book.author && <div style={{ fontSize: 13, color: "#888", fontStyle: "italic", marginBottom: 2 }}>{book.author}</div>}
-                  {book.year && <div style={{ fontSize: 11, color: "#bbb", marginBottom: 10 }}>Published {book.year}</div>}
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
-                    <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
-                    <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
+                <div style={{ padding: "16px 18px 18px" }}>
+
+                  {/* Cover + title row */}
+                  <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
+                    {/* Book cover */}
+                    <div style={{ flexShrink: 0 }}>
+                      {gRating?.thumbnail ? (
+                        <img
+                          src={gRating.thumbnail}
+                          alt={book.title}
+                          style={{ width: 68, height: 100, objectFit: "cover", borderRadius: 4, boxShadow: "0 3px 10px rgba(0,0,0,0.2)" }}
+                          onError={e => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
+                        />
+                      ) : null}
+                      <div style={{
+                        width: 68, height: 100, background: `linear-gradient(135deg, ${color.accent}33, ${color.accent}66)`,
+                        borderRadius: 4, display: gRating?.thumbnail ? "none" : "flex",
+                        alignItems: "center", justifyContent: "center", fontSize: 28,
+                        boxShadow: "0 3px 10px rgba(0,0,0,0.1)", border: `1px solid ${color.accent}44`
+                      }}>📚</div>
+                    </div>
+
+                    {/* Title / author / meta */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h3 style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 700, lineHeight: 1.3 }}>{book.title}</h3>
+                      {book.author && <div style={{ fontSize: 12, color: "#888", fontStyle: "italic", marginBottom: 3 }}>{book.author}</div>}
+                      {book.year && <div style={{ fontSize: 11, color: "#bbb", marginBottom: 8 }}>Published {book.year}</div>}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                        <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
+                        <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ marginBottom: 14 }}>
+
+                  {/* Scores */}
+                  <div style={{ marginBottom: 10 }}>
                     <ScoreBar score={book.avg} name="🐛 Book Wormz" />
-                    {gRating ? (
+                    {gRating?.pct != null ? (
                       <ScoreBar score={gRating.pct} name={`📖 Google Books (${gRating.stars}⭐)`} color="#7f8c8d" />
                     ) : (
-                      <div style={{ fontSize: 11, color: "#ddd", marginBottom: 6 }}>📖 Google Books: loading...</div>
+                      <div style={{ fontSize: 11, color: "#ddd", marginBottom: 6, height: 26 }}>📖 Google Books: loading...</div>
                     )}
                   </div>
+
                   {diff !== null && (
                     <div style={{
                       display: "inline-flex", alignItems: "center", gap: 4,
                       background: parseFloat(diff) >= 0 ? "#eafaf1" : "#fdf2f2",
                       color: parseFloat(diff) >= 0 ? "#27ae60" : "#e74c3c",
-                      borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 700, marginBottom: 14
+                      borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 700, marginBottom: 12
                     }}>
                       {parseFloat(diff) >= 0 ? "▲" : "▼"} {Math.abs(diff)}% vs Google Books
                     </div>
                   )}
+
                   <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
                     <div style={{ fontSize: 10, color: "#bbb", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Individual Scores</div>
-                    <ScoreBar score={book.don} name="Don" />
-                    <ScoreBar score={book.dave} name="Dave" />
-                    <ScoreBar score={book.chan} name="Chan" />
+                    <ScoreBar score={book.don}  name="Don"  color={MEMBER_COLORS.Don.accent}  />
+                    <ScoreBar score={book.dave} name="Dave" color={MEMBER_COLORS.Dave.accent} />
+                    <ScoreBar score={book.chan}  name="Chan" color={MEMBER_COLORS.Chan.accent} />
                   </div>
                 </div>
               </div>
