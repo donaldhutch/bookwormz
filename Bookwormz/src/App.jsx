@@ -135,7 +135,7 @@ export default function BookWormz() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("All");
-  const [sort, setSort] = useState("date");
+  const [sort, setSort] = useState("score");
   const [search, setSearch] = useState("");
   const [hovered, setHovered] = useState(null);
 
