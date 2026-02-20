@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRMPw4b2cTyo7QWLarQDzB9hu53_fwEUu6qiMrVtZHDnALwpCRwtftW2JHophA6j-OTV6fIgEAbo4N2/pub?output=csv";
+const GOOGLE_BOOKS_API_KEY = "AIzaSyDtm_GPThGXNzn_wpPqls-gjGjeO-TfciU";
 
 const MEMBER_COLORS = {
   Don:  { bg: "#e8f4f8", accent: "#2980b9", text: "#1a5276" },
@@ -49,7 +50,25 @@ function parseCSV(text) {
   }).filter(b => b.title);
 }
 
-const ScoreBar = ({ score, name }) => {
+async function fetchGoogleBooksRating(title, author) {
+  const query = encodeURIComponent(`${title} ${author}`);
+  const url = `https://www.googleapis.com/books/v1/volumes?q=${query}&key=${GOOGLE_BOOKS_API_KEY}&maxResults=1`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    const item = data.items?.[0]?.volumeInfo;
+    if (item?.averageRating) {
+      return {
+        stars: item.averageRating,
+        pct: Math.round(item.averageRating * 20),
+        count: item.ratingsCount || 0,
+      };
+    }
+  } catch (e) {}
+  return null;
+}
+
+const ScoreBar = ({ score, name, color }) => {
   if (score === null) return (
     <div style={{ marginBottom: 6 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#bbb", marginBottom: 2 }}>
@@ -62,10 +81,10 @@ const ScoreBar = ({ score, name }) => {
     <div style={{ marginBottom: 6 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
         <span style={{ fontWeight: 600, color: "#555" }}>{name}</span>
-        <span style={{ color: scoreColor(score), fontWeight: 700 }}>{score.toFixed(1)}%</span>
+        <span style={{ color: color || scoreColor(score), fontWeight: 700 }}>{score.toFixed(1)}%</span>
       </div>
       <div style={{ height: 5, background: "#f0f0f0", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${score}%`, background: scoreColor(score), borderRadius: 3 }} />
+        <div style={{ height: "100%", width: `${Math.min(score, 100)}%`, background: color || scoreColor(score), borderRadius: 3 }} />
       </div>
     </div>
   );
@@ -73,6 +92,7 @@ const ScoreBar = ({ score, name }) => {
 
 export default function BookWormz() {
   const [books, setBooks] = useState([]);
+  const [googleRatings, setGoogleRatings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("All");
@@ -83,7 +103,20 @@ export default function BookWormz() {
   useEffect(() => {
     fetch(CSV_URL)
       .then(r => r.text())
-      .then(text => { setBooks(parseCSV(text)); setLoading(false); })
+      .then(async text => {
+        const parsed = parseCSV(text);
+        setBooks(parsed);
+        setLoading(false);
+        // Fetch Google Books ratings in background
+        const ratings = {};
+        for (const book of parsed) {
+          const rating = await fetchGoogleBooksRating(book.title, book.author);
+          if (rating) {
+            ratings[book.title] = rating;
+            setGoogleRatings(prev => ({ ...prev, [book.title]: rating }));
+          }
+        }
+      })
       .catch(() => { setError("Couldn't load data from Google Sheets."); setLoading(false); });
   }, []);
 
@@ -119,6 +152,7 @@ export default function BookWormz() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#f7f4ef", fontFamily: "Georgia, serif", color: "#1a1a1a" }}>
+      {/* Header */}
       <div style={{ background: "#1a1a2e", color: "white", padding: "40px 32px 32px", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 20px)" }} />
         <div style={{ position: "relative", maxWidth: 1100, margin: "0 auto" }}>
@@ -151,6 +185,7 @@ export default function BookWormz() {
         </div>
       </div>
 
+      {/* Controls */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px 0" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <input
@@ -180,11 +215,14 @@ export default function BookWormz() {
         <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {books.length} books</div>
       </div>
 
+      {/* Grid */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "16px 32px 48px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 18 }}>
           {sorted.map((book) => {
             const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
             const isHovered = hovered === book.title;
+            const gRating = googleRatings[book.title];
+            const diff = gRating ? (book.avg - gRating.pct).toFixed(1) : null;
             return (
               <div key={book.title}
                 onMouseEnter={() => setHovered(book.title)}
@@ -205,13 +243,36 @@ export default function BookWormz() {
                     <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
                     <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f7f4ef", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
-                    <span style={{ fontSize: 12, color: "#888", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Group Score</span>
-                    <span style={{ fontSize: 24, fontWeight: 700, color: scoreColor(book.avg) }}>{book.avg?.toFixed(1)}%</span>
+
+                  {/* Scores comparison */}
+                  <div style={{ marginBottom: 14 }}>
+                    <ScoreBar score={book.avg} name="🐛 Book Wormz" />
+                    {gRating ? (
+                      <ScoreBar score={gRating.pct} name={`📖 Google Books (${gRating.stars}⭐)`} color="#7f8c8d" />
+                    ) : (
+                      <div style={{ fontSize: 11, color: "#ddd", marginBottom: 6 }}>📖 Google Books: loading...</div>
+                    )}
                   </div>
-                  <ScoreBar score={book.don} name="Don" />
-                  <ScoreBar score={book.dave} name="Dave" />
-                  <ScoreBar score={book.chan} name="Chan" />
+
+                  {/* Difference badge */}
+                  {diff !== null && (
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      background: parseFloat(diff) >= 0 ? "#eafaf1" : "#fdf2f2",
+                      color: parseFloat(diff) >= 0 ? "#27ae60" : "#e74c3c",
+                      borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 700, marginBottom: 14
+                    }}>
+                      {parseFloat(diff) >= 0 ? "▲" : "▼"} {Math.abs(diff)}% vs Google Books
+                    </div>
+                  )}
+
+                  {/* Individual scores */}
+                  <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
+                    <div style={{ fontSize: 10, color: "#bbb", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Individual Scores</div>
+                    <ScoreBar score={book.don} name="Don" />
+                    <ScoreBar score={book.dave} name="Dave" />
+                    <ScoreBar score={book.chan} name="Chan" />
+                  </div>
                 </div>
               </div>
             );
