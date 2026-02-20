@@ -1,31 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
-const RAW_DATA = [
-  { title: "Gentleman in Moscow", picker: "Don", date: "Jan 2023", don: 70.10, dave: 67.10, chan: null, avg: 68.60 },
-  { title: "Tomorrow and Tomorrow and Tomorrow", picker: "Don", date: "Mar 2023", don: 88.50, dave: 77.60, chan: 80.10, avg: 82.07 },
-  { title: "The Wager", picker: "Chan", date: "May 2023", don: 77.00, dave: 82.50, chan: 87.30, avg: 82.27 },
-  { title: "All Sinners Bleed", picker: "Dave", date: "Jul 2023", don: 70.30, dave: 75.05, chan: 62.00, avg: 69.12 },
-  { title: "Band of Brothers", picker: "Chan", date: "Aug 2023", don: 88.40, dave: 90.90, chan: 96.90, avg: 92.07 },
-  { title: "Killers of the Flower Moon", picker: "Don", date: "Oct 2023", don: 77.30, dave: 85.90, chan: 86.80, avg: 83.33 },
-  { title: "Medium Raw", picker: "Dave", date: "Oct 2023", don: 84.70, dave: 86.90, chan: 92.40, avg: 88.00 },
-  { title: "A Short History of Nearly Everything", picker: "Chan", date: "Dec 2023", don: 72.30, dave: 84.50, chan: 85.02, avg: 80.61 },
-  { title: "Martyr!", picker: "Don", date: "Feb 2024", don: 77.50, dave: 69.00, chan: 42.00, avg: 62.83 },
-  { title: "Lonesome Dove", picker: "Dave", date: "Mar 2024", don: 94.20, dave: 96.91, chan: 93.90, avg: 95.00 },
-  { title: "The 7½ Deaths of Evelyn Hardcastle", picker: "Chan", date: "May 2024", don: 77.81, dave: 82.30, chan: 83.60, avg: 81.24 },
-  { title: "Demon Copperhead", picker: "Don", date: "Jul 2024", don: 95.89, dave: 91.20, chan: 97.20, avg: 94.76 },
-  { title: "When Breath Becomes Air", picker: "Dave", date: "Sep 2024", don: 94.29, dave: 93.10, chan: 86.50, avg: 91.30 },
-  { title: "Ultra Processed People", picker: "Chan", date: "Sep 2024", don: 86.34, dave: 87.40, chan: 87.80, avg: 87.18 },
-  { title: "Dune", picker: "Don", date: "Nov 2024", don: 84.93, dave: 86.50, chan: 85.20, avg: 85.54 },
-  { title: "Matterhorn", picker: "Dave", date: "Jan 2024", don: 88.11, dave: null, chan: 89.84, avg: 88.98 },
-  { title: "Say Nothing", picker: "Chan", date: "Mar 2025", don: 81.21, dave: 85.70, chan: 86.56, avg: 84.49 },
-  { title: "The Nightingale", picker: "Don", date: "Apr 2025", don: 76.21, dave: 75.40, chan: 78.40, avg: 76.67 },
-  { title: "A Thousand Splendid Suns", picker: "Dave", date: "Jul 2025", don: 76.90, dave: 82.30, chan: 81.80, avg: 80.33 },
-  { title: "Eminent Dogs, Dangerous Men", picker: "Chan", date: "Aug 2025", don: 62.10, dave: 65.00, chan: 67.90, avg: 65.00 },
-  { title: "Shop Class as Soulcraft", picker: "Don", date: "Sep 2025", don: 73.51, dave: 79.70, chan: 71.10, avg: 74.77 },
-  { title: "Empire of Pain", picker: "Dave", date: "Oct 2025", don: 84.74, dave: 92.10, chan: 88.93, avg: 88.59 },
-  { title: "Small Things Like These", picker: "Chan", date: "Dec 2025", don: 69.71, dave: 81.10, chan: 78.30, avg: 76.37 },
-  { title: "Fourth Wing", picker: "Don", date: "Dec 2025", don: 78.43, dave: 80.69, chan: 84.60, avg: 81.24 },
-];
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRMPw4b2cTyo7QWLarQDzB9hu53_fwEUu6qiMrVtZHDnALwpCRwtftW2JHophA6j-OTV6fIgEAbo4N2/pub?output=csv";
 
 const MEMBER_COLORS = {
   Don:  { bg: "#e8f4f8", accent: "#2980b9", text: "#1a5276" },
@@ -40,6 +15,39 @@ const scoreColor = (score) => {
   if (score >= 60) return "#e67e22";
   return "#e74c3c";
 };
+
+function parseCSV(text) {
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+  return lines.slice(1).map(line => {
+    const cols = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') { inQuotes = !inQuotes; }
+      else if (line[i] === "," && !inQuotes) { cols.push(current.trim()); current = ""; }
+      else { current += line[i]; }
+    }
+    cols.push(current.trim());
+    const row = {};
+    headers.forEach((h, i) => row[h] = cols[i] || "");
+    const parseScore = (val) => {
+      if (!val || val.trim() === "") return null;
+      return parseFloat(val.replace("%", ""));
+    };
+    return {
+      title: row["Book Title"]?.trim(),
+      author: row["Author"]?.trim(),
+      year: row["Year Published"]?.trim(),
+      picker: row["Who Picked"]?.trim(),
+      date: row["Date Picked"]?.trim(),
+      don:  parseScore(row["Don Score"]),
+      dave: parseScore(row["Dave Score"]),
+      chan: parseScore(row["Chan Score"]),
+      avg:  parseScore(row["Average Score"]),
+    };
+  }).filter(b => b.title);
+}
 
 const ScoreBar = ({ score, name }) => {
   if (score === null) return (
@@ -64,14 +72,23 @@ const ScoreBar = ({ score, name }) => {
 };
 
 export default function BookWormz() {
+  const [books, setBooks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filter, setFilter] = useState("All");
   const [sort, setSort] = useState("date");
   const [search, setSearch] = useState("");
   const [hovered, setHovered] = useState(null);
 
-  const members = ["All", "Don", "Dave", "Chan"];
+  useEffect(() => {
+    fetch(CSV_URL)
+      .then(r => r.text())
+      .then(text => { setBooks(parseCSV(text)); setLoading(false); })
+      .catch(() => { setError("Couldn't load data from Google Sheets."); setLoading(false); });
+  }, []);
 
-  const sorted = [...RAW_DATA]
+  const members = ["All", "Don", "Dave", "Chan"];
+  const sorted = [...books]
     .filter(b => filter === "All" || b.picker === filter)
     .filter(b => b.title.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
@@ -80,17 +97,28 @@ export default function BookWormz() {
       return 0;
     });
 
-  const topBook = [...RAW_DATA].sort((a, b) => b.avg - a.avg)[0];
-  const avgAll = (RAW_DATA.reduce((s, b) => s + b.avg, 0) / RAW_DATA.length).toFixed(1);
+  const topBook = [...books].sort((a, b) => b.avg - a.avg)[0];
+  const avgAll = books.length ? (books.reduce((s, b) => s + (b.avg || 0), 0) / books.length).toFixed(1) : "—";
   const pickerStats = ["Don", "Dave", "Chan"].map(name => {
-    const picked = RAW_DATA.filter(b => b.picker === name);
-    const avg = (picked.reduce((s, b) => s + b.avg, 0) / picked.length).toFixed(1);
+    const picked = books.filter(b => b.picker === name);
+    const avg = picked.length ? (picked.reduce((s, b) => s + (b.avg || 0), 0) / picked.length).toFixed(1) : "—";
     return { name, count: picked.length, avg };
   });
 
+  if (loading) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f7f4ef", fontFamily: "Georgia, serif", fontSize: 20, color: "#888" }}>
+      Loading The Book Wormz... 📚
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f7f4ef", fontFamily: "Georgia, serif", fontSize: 18, color: "#c0392b" }}>
+      {error}
+    </div>
+  );
+
   return (
     <div style={{ minHeight: "100vh", background: "#f7f4ef", fontFamily: "Georgia, serif", color: "#1a1a1a" }}>
-      {/* Header */}
       <div style={{ background: "#1a1a2e", color: "white", padding: "40px 32px 32px", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 20px)" }} />
         <div style={{ position: "relative", maxWidth: 1100, margin: "0 auto" }}>
@@ -101,7 +129,7 @@ export default function BookWormz() {
               <h1 style={{ margin: 0, fontSize: 42, fontWeight: 700, letterSpacing: -1 }}>The Book Wormz</h1>
             </div>
           </div>
-          <p style={{ margin: "8px 0 24px", color: "#aaa", fontSize: 15 }}>Don · Dave · Chan — {RAW_DATA.length} books read and rated</p>
+          <p style={{ margin: "8px 0 24px", color: "#aaa", fontSize: 15 }}>Don · Dave · Chan — {books.length} books read and rated</p>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px" }}>
               <div style={{ fontSize: 28, fontWeight: 700 }}>{avgAll}%</div>
@@ -113,15 +141,16 @@ export default function BookWormz() {
                 <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>{p.name} · {p.count} picks</div>
               </div>
             ))}
-            <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px", flex: 1, minWidth: 180 }}>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>🏆 {topBook.title}</div>
-              <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Top rated · {topBook.avg}%</div>
-            </div>
+            {topBook && (
+              <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px", flex: 1, minWidth: 180 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>🏆 {topBook.title}</div>
+                <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Top rated · {topBook.avg}%</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Controls */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px 0" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <input
@@ -148,14 +177,13 @@ export default function BookWormz() {
             ))}
           </div>
         </div>
-        <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {RAW_DATA.length} books</div>
+        <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {books.length} books</div>
       </div>
 
-      {/* Grid */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "16px 32px 48px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 18 }}>
           {sorted.map((book) => {
-            const color = MEMBER_COLORS[book.picker];
+            const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
             const isHovered = hovered === book.title;
             return (
               <div key={book.title}
@@ -170,14 +198,16 @@ export default function BookWormz() {
                 }}>
                 <div style={{ height: 5, background: color.accent }} />
                 <div style={{ padding: "18px 20px 20px" }}>
-                  <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{book.title}</h3>
+                  <h3 style={{ margin: "0 0 2px", fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{book.title}</h3>
+                  {book.author && <div style={{ fontSize: 13, color: "#888", fontStyle: "italic", marginBottom: 2 }}>{book.author}</div>}
+                  {book.year && <div style={{ fontSize: 11, color: "#bbb", marginBottom: 10 }}>Published {book.year}</div>}
                   <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
                     <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
                     <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f7f4ef", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
                     <span style={{ fontSize: 12, color: "#888", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Group Score</span>
-                    <span style={{ fontSize: 24, fontWeight: 700, color: scoreColor(book.avg) }}>{book.avg.toFixed(1)}%</span>
+                    <span style={{ fontSize: 24, fontWeight: 700, color: scoreColor(book.avg) }}>{book.avg?.toFixed(1)}%</span>
                   </div>
                   <ScoreBar score={book.don} name="Don" />
                   <ScoreBar score={book.dave} name="Dave" />
