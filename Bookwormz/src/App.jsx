@@ -51,26 +51,59 @@ function parseCSV(text) {
   }).filter(b => b.title);
 }
 
+function extractBestResult(items) {
+  if (!items || items.length === 0) return null;
+  // Pick the item with the most ratings that also has a rating score
+  const withRatings = items.filter(i => i.volumeInfo?.averageRating && i.volumeInfo?.ratingsCount);
+  const best = withRatings.sort((a, b) => (b.volumeInfo.ratingsCount || 0) - (a.volumeInfo.ratingsCount || 0))[0]
+    || items[0]; // fallback to first result for thumbnail even if no rating
+  const info = best.volumeInfo;
+  const rawThumb = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || null;
+  return {
+    stars:     info.averageRating || null,
+    pct:       info.averageRating ? Math.round(info.averageRating * 20) : null,
+    count:     info.ratingsCount || 0,
+    thumbnail: rawThumb ? rawThumb.replace("http://", "https://") : null,
+  };
+}
+
 async function fetchGoogleBooksData(isbn, title, author) {
-  let url;
-  if (isbn) {
-    url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${GOOGLE_BOOKS_API_KEY}`;
-  } else {
-    const query = encodeURIComponent(`${title} ${author}`);
-    url = `https://www.googleapis.com/books/v1/volumes?q=${query}&key=${GOOGLE_BOOKS_API_KEY}&maxResults=1`;
-  }
+  const KEY = GOOGLE_BOOKS_API_KEY;
   try {
-    const res = await fetch(url);
+    // Step 1: Try ISBN lookup (up to 5 results so we can pick the best-rated edition)
+    if (isbn) {
+      const res  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=5&key=${KEY}`);
+      const data = await res.json();
+      if (data.items?.length) {
+        const result = extractBestResult(data.items);
+        // If we got a rating, great. If not, fall through to title search for rating
+        // but keep this thumbnail
+        if (result?.stars) return result;
+        // No rating found on this ISBN — try title search but preserve thumbnail
+        const titleRes  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(`intitle:${title} inauthor:${author}`)}&maxResults=10&key=${KEY}`);
+        const titleData = await titleRes.json();
+        const titleResult = extractBestResult(titleData.items);
+        if (titleResult) {
+          return {
+            ...titleResult,
+            thumbnail: result?.thumbnail || titleResult.thumbnail,
+          };
+        }
+        return result; // return what we have even without a rating (for the thumbnail)
+      }
+    }
+
+    // Step 2: No ISBN or ISBN returned nothing — search by title + author
+    const q = encodeURIComponent(`intitle:${title} inauthor:${author}`);
+    const res  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=10&key=${KEY}`);
     const data = await res.json();
-    const item = data.items?.[0]?.volumeInfo;
-    if (!item) return null;
-    const rawThumb = item.imageLinks?.thumbnail || item.imageLinks?.smallThumbnail || null;
-    return {
-      stars:     item.averageRating || null,
-      pct:       item.averageRating ? Math.round(item.averageRating * 20) : null,
-      count:     item.ratingsCount || 0,
-      thumbnail: rawThumb ? rawThumb.replace("http://", "https://") : null,
-    };
+    if (data.items?.length) return extractBestResult(data.items);
+
+    // Step 3: Last resort — title only
+    const res2  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(title)}&maxResults=10&key=${KEY}`);
+    const data2 = await res2.json();
+    return extractBestResult(data2.items);
+
   } catch (e) { return null; }
 }
 
