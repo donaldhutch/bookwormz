@@ -9,12 +9,46 @@ const MEMBER_COLORS = {
   Chan: { bg: "#fdf2f8", accent: "#cb4335", text: "#78281f" },
 };
 
-const scoreColor = (score) => {
-  if (score >= 90) return "#27ae60";
-  if (score >= 80) return "#2ecc71";
-  if (score >= 70) return "#f39c12";
-  if (score >= 60) return "#e67e22";
+// Convert percentage (0-100) to 1-5 star scale
+const pctToStars = (pct) => pct === null ? null : Math.round((pct / 100 * 5) * 100) / 100;
+
+const starColor = (stars) => {
+  if (stars >= 4.5) return "#27ae60";
+  if (stars >= 4.0) return "#2ecc71";
+  if (stars >= 3.5) return "#f39c12";
+  if (stars >= 3.0) return "#e67e22";
   return "#e74c3c";
+};
+
+const StarDisplay = ({ stars }) => {
+  if (stars === null) return null;
+  const full = Math.floor(stars);
+  const half = stars - full >= 0.25 && stars - full < 0.75;
+  const empty = 5 - full - (half ? 1 : 0);
+  return (
+    <span style={{ fontSize: 13, letterSpacing: 1 }}>
+      {"★".repeat(full)}
+      {half ? "½" : ""}
+      {"☆".repeat(empty)}
+    </span>
+  );
+};
+
+const ScoreRow = ({ stars, name, color }) => {
+  if (stars === null) return (
+    <div style={{ marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#bbb" }}>
+      <span>{name}</span><span>—</span>
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: "#555" }}>{name}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color: color || starColor(stars) }}><StarDisplay stars={stars} /></span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: color || starColor(stars) }}>{stars.toFixed(2)}</span>
+      </div>
+    </div>
+  );
 };
 
 function parseCSV(text) {
@@ -36,102 +70,54 @@ function parseCSV(text) {
       if (!val || val.trim() === "") return null;
       return parseFloat(val.replace("%", ""));
     };
+    const parseGoodreads = (val) => {
+      if (!val || val.trim() === "") return null;
+      return parseFloat(val);
+    };
     return {
-      title:  row["Book Title"]?.trim(),
-      author: row["Author"]?.trim(),
-      year:   row["Year Published"]?.trim(),
-      picker: row["Who Picked"]?.trim(),
-      date:   row["Date Picked"]?.trim(),
-      don:    parseScore(row["Don Score"]),
-      dave:   parseScore(row["Dave Score"]),
-      chan:   parseScore(row["Chan Score"]),
-      avg:    parseScore(row["Average Score"]),
-      isbn:   row["ISBN"]?.trim() || null,
+      title:     row["Book Title"]?.trim(),
+      author:    row["Author"]?.trim(),
+      year:      row["Year Published"]?.trim(),
+      picker:    row["Who Picked"]?.trim(),
+      date:      row["Date Picked"]?.trim(),
+      don:       pctToStars(parseScore(row["Don Score"])),
+      dave:      pctToStars(parseScore(row["Dave Score"])),
+      chan:      pctToStars(parseScore(row["Chan Score"])),
+      avg:       pctToStars(parseScore(row["Average Score"])),
+      isbn:      row["ISBN"]?.trim() || null,
+      goodreads: parseGoodreads(row["Goodreads score"]),
     };
   }).filter(b => b.title);
 }
 
-function extractBestResult(items) {
+function extractThumbnail(items) {
   if (!items || items.length === 0) return null;
-  // Pick the item with the most ratings that also has a rating score
-  const withRatings = items.filter(i => i.volumeInfo?.averageRating && i.volumeInfo?.ratingsCount);
-  const best = withRatings.sort((a, b) => (b.volumeInfo.ratingsCount || 0) - (a.volumeInfo.ratingsCount || 0))[0]
-    || items[0]; // fallback to first result for thumbnail even if no rating
-  const info = best.volumeInfo;
-  const rawThumb = info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail || null;
-  return {
-    stars:     info.averageRating || null,
-    pct:       info.averageRating ? Math.round(info.averageRating * 20) : null,
-    count:     info.ratingsCount || 0,
-    thumbnail: rawThumb ? rawThumb.replace("http://", "https://") : null,
-  };
+  for (const item of items) {
+    const thumb = item.volumeInfo?.imageLinks?.thumbnail || item.volumeInfo?.imageLinks?.smallThumbnail;
+    if (thumb) return thumb.replace("http://", "https://");
+  }
+  return null;
 }
 
-async function fetchGoogleBooksData(isbn, title, author) {
+async function fetchCoverThumbnail(isbn, title, author) {
   const KEY = GOOGLE_BOOKS_API_KEY;
   try {
-    // Step 1: Try ISBN lookup (up to 5 results so we can pick the best-rated edition)
     if (isbn) {
       const res  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=5&key=${KEY}`);
       const data = await res.json();
-      if (data.items?.length) {
-        const result = extractBestResult(data.items);
-        // If we got a rating, great. If not, fall through to title search for rating
-        // but keep this thumbnail
-        if (result?.stars) return result;
-        // No rating found on this ISBN — try title search but preserve thumbnail
-        const titleRes  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(`intitle:${title} inauthor:${author}`)}&maxResults=10&key=${KEY}`);
-        const titleData = await titleRes.json();
-        const titleResult = extractBestResult(titleData.items);
-        if (titleResult) {
-          return {
-            ...titleResult,
-            thumbnail: result?.thumbnail || titleResult.thumbnail,
-          };
-        }
-        return result; // return what we have even without a rating (for the thumbnail)
-      }
+      const thumb = extractThumbnail(data.items);
+      if (thumb) return thumb;
     }
-
-    // Step 2: No ISBN or ISBN returned nothing — search by title + author
     const q = encodeURIComponent(`intitle:${title} inauthor:${author}`);
-    const res  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=10&key=${KEY}`);
+    const res  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=5&key=${KEY}`);
     const data = await res.json();
-    if (data.items?.length) return extractBestResult(data.items);
-
-    // Step 3: Last resort — title only
-    const res2  = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(title)}&maxResults=10&key=${KEY}`);
-    const data2 = await res2.json();
-    return extractBestResult(data2.items);
-
+    return extractThumbnail(data.items);
   } catch (e) { return null; }
 }
 
-const ScoreBar = ({ score, name, color }) => {
-  if (score === null) return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#bbb", marginBottom: 2 }}>
-        <span>{name}</span><span>—</span>
-      </div>
-      <div style={{ height: 5, background: "#f0f0f0", borderRadius: 3 }} />
-    </div>
-  );
-  return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
-        <span style={{ fontWeight: 600, color: "#555" }}>{name}</span>
-        <span style={{ color: color || scoreColor(score), fontWeight: 700 }}>{score.toFixed(1)}%</span>
-      </div>
-      <div style={{ height: 5, background: "#f0f0f0", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${Math.min(score, 100)}%`, background: color || scoreColor(score), borderRadius: 3 }} />
-      </div>
-    </div>
-  );
-};
-
 export default function BookWormz() {
   const [books, setBooks] = useState([]);
-  const [googleRatings, setGoogleRatings] = useState({});
+  const [thumbnails, setThumbnails] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("All");
@@ -147,9 +133,9 @@ export default function BookWormz() {
         setBooks(parsed);
         setLoading(false);
         for (const book of parsed) {
-          const rating = await fetchGoogleBooksData(book.isbn, book.title, book.author);
-          if (rating) {
-            setGoogleRatings(prev => ({ ...prev, [book.title]: rating }));
+          const thumb = await fetchCoverThumbnail(book.isbn, book.title, book.author);
+          if (thumb) {
+            setThumbnails(prev => ({ ...prev, [book.title]: thumb }));
           }
         }
       })
@@ -170,10 +156,14 @@ export default function BookWormz() {
     });
 
   const topBook = [...finishedBooks].sort((a, b) => b.avg - a.avg)[0];
-  const avgAll = finishedBooks.length ? (finishedBooks.reduce((s, b) => s + (b.avg || 0), 0) / finishedBooks.length).toFixed(1) : "—";
+  const avgAll = finishedBooks.length
+    ? (finishedBooks.reduce((s, b) => s + (b.avg || 0), 0) / finishedBooks.length).toFixed(2)
+    : "—";
   const pickerStats = ["Don", "Dave", "Chan"].map(name => {
     const picked = finishedBooks.filter(b => b.picker === name);
-    const avg = picked.length ? (picked.reduce((s, b) => s + (b.avg || 0), 0) / picked.length).toFixed(1) : "—";
+    const avg = picked.length
+      ? (picked.reduce((s, b) => s + (b.avg || 0), 0) / picked.length).toFixed(2)
+      : "—";
     return { name, count: picked.length, avg };
   });
 
@@ -206,23 +196,23 @@ export default function BookWormz() {
           <p style={{ margin: "8px 0 24px", color: "#aaa", fontSize: 15 }}>Don · Dave · Chan — {finishedBooks.length} books read and rated</p>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px" }}>
-              <div style={{ fontSize: 28, fontWeight: 700 }}>{avgAll}%</div>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>{avgAll} <span style={{ fontSize: 18 }}>★</span></div>
               <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Group Avg</div>
             </div>
             {pickerStats.map(p => (
               <div key={p.name} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px" }}>
-                <div style={{ fontSize: 28, fontWeight: 700, color: MEMBER_COLORS[p.name].accent }}>{p.avg}%</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: MEMBER_COLORS[p.name].accent }}>{p.avg} <span style={{ fontSize: 18 }}>★</span></div>
                 <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>{p.name} · {p.count} picks</div>
               </div>
             ))}
             {topBook && (
               <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px 20px", flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12 }}>
-                {googleRatings[topBook.title]?.thumbnail && (
-                  <img src={googleRatings[topBook.title].thumbnail} alt={topBook.title} style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.4)", flexShrink: 0 }} />
+                {thumbnails[topBook.title] && (
+                  <img src={thumbnails[topBook.title]} alt={topBook.title} style={{ width: 36, height: 52, objectFit: "cover", borderRadius: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.4)", flexShrink: 0 }} />
                 )}
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 700 }}>🏆 {topBook.title}</div>
-                  <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Top rated · {topBook.avg}%</div>
+                  <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Top rated · {topBook.avg} ★</div>
                 </div>
               </div>
             )}
@@ -240,11 +230,10 @@ export default function BookWormz() {
             <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
               {currentlyReading.map(book => {
                 const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
-                const gRating = googleRatings[book.title];
                 return (
                   <div key={book.title} style={{ display: "flex", gap: 16, alignItems: "center", background: "rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 20px", flex: 1, minWidth: 280, border: "1px solid rgba(243,156,18,0.3)" }}>
-                    {gRating?.thumbnail ? (
-                      <img src={gRating.thumbnail} alt={book.title} style={{ width: 52, height: 72, objectFit: "cover", borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", flexShrink: 0 }} />
+                    {thumbnails[book.title] ? (
+                      <img src={thumbnails[book.title]} alt={book.title} style={{ width: 52, height: 72, objectFit: "cover", borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", flexShrink: 0 }} />
                     ) : (
                       <div style={{ width: 52, height: 72, background: "rgba(255,255,255,0.1)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📗</div>
                     )}
@@ -254,7 +243,7 @@ export default function BookWormz() {
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
                         {book.date && <span style={{ fontSize: 11, color: "#888" }}>Started {book.date}</span>}
-                        {gRating && <span style={{ fontSize: 11, color: "#f39c12", fontWeight: 600 }}>⭐ {gRating.stars} on Google Books</span>}
+                        {book.goodreads && <span style={{ fontSize: 11, color: "#f39c12", fontWeight: 600 }}>★ {book.goodreads} on Goodreads</span>}
                       </div>
                     </div>
                     <div style={{ textAlign: "center", flexShrink: 0 }}>
@@ -288,7 +277,7 @@ export default function BookWormz() {
             ))}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            {[["date", "📅 Date"], ["score", "⭐ Score"], ["title", "🔤 Title"]].map(([val, label]) => (
+            {[["score", "⭐ Score"], ["title", "🔤 Title"]].map(([val, label]) => (
               <button key={val} onClick={() => setSort(val)} style={{
                 padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", cursor: "pointer", fontSize: 12,
                 background: sort === val ? "#1a1a2e" : "white", color: sort === val ? "white" : "#555", fontFamily: "Georgia, serif"
@@ -305,8 +294,7 @@ export default function BookWormz() {
           {sorted.map((book) => {
             const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
             const isHovered = hovered === book.title;
-            const gRating = googleRatings[book.title];
-            const diff = gRating ? (book.avg - gRating.pct).toFixed(1) : null;
+            const thumb = thumbnails[book.title];
             return (
               <div key={book.title}
                 onMouseEnter={() => setHovered(book.title)}
@@ -323,11 +311,10 @@ export default function BookWormz() {
 
                   {/* Cover + title row */}
                   <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
-                    {/* Book cover */}
                     <div style={{ flexShrink: 0 }}>
-                      {gRating?.thumbnail ? (
+                      {thumb ? (
                         <img
-                          src={gRating.thumbnail}
+                          src={thumb}
                           alt={book.title}
                           style={{ width: 68, height: 100, objectFit: "cover", borderRadius: 4, boxShadow: "0 3px 10px rgba(0,0,0,0.2)" }}
                           onError={e => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
@@ -335,7 +322,7 @@ export default function BookWormz() {
                       ) : null}
                       <div style={{
                         width: 68, height: 100, background: `linear-gradient(135deg, ${color.accent}33, ${color.accent}66)`,
-                        borderRadius: 4, display: gRating?.thumbnail ? "none" : "flex",
+                        borderRadius: 4, display: thumb ? "none" : "flex",
                         alignItems: "center", justifyContent: "center", fontSize: 28,
                         boxShadow: "0 3px 10px rgba(0,0,0,0.1)", border: `1px solid ${color.accent}44`
                       }}>📚</div>
@@ -355,30 +342,17 @@ export default function BookWormz() {
 
                   {/* Scores */}
                   <div style={{ marginBottom: 10 }}>
-                    <ScoreBar score={book.avg} name="🐛 Book Wormz" />
-                    {gRating?.pct != null ? (
-                      <ScoreBar score={gRating.pct} name={`📖 Google Books (${gRating.stars}⭐)`} color="#7f8c8d" />
-                    ) : (
-                      <div style={{ fontSize: 11, color: "#ddd", marginBottom: 6, height: 26 }}>📖 Google Books: loading...</div>
+                    <ScoreRow stars={book.avg} name="🐛 Book Wormz" />
+                    {book.goodreads !== null && (
+                      <ScoreRow stars={book.goodreads} name="📗 Goodreads" color="#4a7c59" />
                     )}
                   </div>
 
-                  {diff !== null && (
-                    <div style={{
-                      display: "inline-flex", alignItems: "center", gap: 4,
-                      background: parseFloat(diff) >= 0 ? "#eafaf1" : "#fdf2f2",
-                      color: parseFloat(diff) >= 0 ? "#27ae60" : "#e74c3c",
-                      borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 700, marginBottom: 12
-                    }}>
-                      {parseFloat(diff) >= 0 ? "▲" : "▼"} {Math.abs(diff)}% vs Google Books
-                    </div>
-                  )}
-
                   <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
                     <div style={{ fontSize: 10, color: "#bbb", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Individual Scores</div>
-                    <ScoreBar score={book.don}  name="Don"  color={MEMBER_COLORS.Don.accent}  />
-                    <ScoreBar score={book.dave} name="Dave" color={MEMBER_COLORS.Dave.accent} />
-                    <ScoreBar score={book.chan}  name="Chan" color={MEMBER_COLORS.Chan.accent} />
+                    <ScoreRow stars={book.don}  name="Don"  color={MEMBER_COLORS.Don.accent}  />
+                    <ScoreRow stars={book.dave} name="Dave" color={MEMBER_COLORS.Dave.accent} />
+                    <ScoreRow stars={book.chan}  name="Chan" color={MEMBER_COLORS.Chan.accent} />
                   </div>
                 </div>
               </div>
