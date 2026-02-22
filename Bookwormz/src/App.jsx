@@ -1,4 +1,7 @@
 import { useState, useEffect } from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine
+} from "recharts";
 
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRMPw4b2cTyo7QWLarQDzB9hu53_fwEUu6qiMrVtZHDnALwpCRwtftW2JHophA6j-OTV6fIgEAbo4N2/pub?output=csv";
 const GOOGLE_BOOKS_API_KEY = "AIzaSyDtm_GPThGXNzn_wpPqls-gjGjeO-TfciU";
@@ -9,7 +12,6 @@ const MEMBER_COLORS = {
   Chan: { bg: "#fdf2f8", accent: "#cb4335", text: "#78281f" },
 };
 
-// Convert percentage (0-100) to 1-5 star scale
 const pctToStars = (pct) => pct === null ? null : Math.round((pct / 100 * 5) * 100) / 100;
 
 const starColor = (stars) => {
@@ -115,6 +117,138 @@ async function fetchCoverThumbnail(isbn, title, author) {
   } catch (e) { return null; }
 }
 
+// Shorten long titles for the chart x-axis
+const shortTitle = (title) => title.length > 16 ? title.slice(0, 14) + "…" : title;
+
+// Custom tooltip for the chart
+const ChartTooltip = ({ active, payload, label }) => {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div style={{ background: "white", border: "1px solid #ece9e3", borderRadius: 10, padding: "12px 16px", boxShadow: "0 4px 16px rgba(0,0,0,0.1)", fontFamily: "Georgia, serif", minWidth: 180 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: "#1a1a2e" }}>{label}</div>
+      {payload.map(p => (
+        <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 16, fontSize: 12, marginBottom: 4 }}>
+          <span style={{ color: p.fill, fontWeight: 600 }}>{p.name}</span>
+          <span style={{ fontWeight: 700 }}>{"★".repeat(Math.floor(p.value))}{"☆".repeat(5 - Math.floor(p.value))} {p.value.toFixed(2)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const COMPARE_OPTIONS = [
+  { key: "avg",  label: "🐛 Book Wormz", color: "#1a1a2e", dataKey: b => b.avg },
+  { key: "don",  label: "Don",           color: "#2980b9",  dataKey: b => b.don },
+  { key: "dave", label: "Dave",          color: "#d4ac0d",  dataKey: b => b.dave },
+  { key: "chan", label: "Chan",          color: "#cb4335",  dataKey: b => b.chan },
+];
+
+function InsightsPage({ books }) {
+  const [compareKey, setCompareKey] = useState("avg");
+  const finishedBooks = books.filter(b => b.avg !== null);
+
+  const parseDate = (d) => d ? new Date(d).getTime() : 0;
+  const chronological = [...finishedBooks].sort((a, b) => parseDate(a.date) - parseDate(b.date));
+
+  const compareOption = COMPARE_OPTIONS.find(o => o.key === compareKey);
+
+  const chartData = chronological.map(b => ({
+    title:      b.title,
+    shortTitle: shortTitle(b.title),
+    [compareOption.label]: compareOption.dataKey(b) !== null ? parseFloat(compareOption.dataKey(b).toFixed(2)) : null,
+    "Goodreads": b.goodreads !== null ? parseFloat(b.goodreads.toFixed(2)) : null,
+  }));
+
+  const booksWithBoth = finishedBooks.filter(b => compareOption.dataKey(b) !== null && b.goodreads !== null);
+  const compareAvg = booksWithBoth.length
+    ? (booksWithBoth.reduce((s, b) => s + compareOption.dataKey(b), 0) / booksWithBoth.length).toFixed(2)
+    : null;
+  const grBooks = finishedBooks.filter(b => b.goodreads !== null);
+  const grAvg   = grBooks.length
+    ? (grBooks.reduce((s, b) => s + b.goodreads, 0) / grBooks.length).toFixed(2)
+    : null;
+  const ratedHigher = booksWithBoth.filter(b => compareOption.dataKey(b) > b.goodreads).length;
+  const grHigher    = booksWithBoth.filter(b => b.goodreads > compareOption.dataKey(b)).length;
+
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 32px 64px" }}>
+      <h2 style={{ fontSize: 26, fontWeight: 700, color: "#1a1a2e", marginBottom: 6 }}>📊 Ratings Over Time</h2>
+      <p style={{ color: "#888", fontSize: 14, marginBottom: 24 }}>Compare ratings vs. Goodreads, in the order books were read.</p>
+
+      {/* Toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 32, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "#aaa", marginRight: 4 }}>Compare:</span>
+        {COMPARE_OPTIONS.map(opt => (
+          <button key={opt.key} onClick={() => setCompareKey(opt.key)} style={{
+            padding: "8px 16px", borderRadius: 8, border: `2px solid ${opt.color}`,
+            cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif",
+            background: compareKey === opt.key ? opt.color : "white",
+            color: compareKey === opt.key ? "white" : opt.color,
+            transition: "all 0.15s",
+          }}>{opt.label}</button>
+        ))}
+        <span style={{ fontSize: 12, color: "#aaa" }}>vs. 📗 Goodreads</span>
+      </div>
+
+      {/* Stat cards */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 36 }}>
+        {compareAvg && (
+          <div style={{ background: "white", borderRadius: 12, padding: "16px 22px", border: `1px solid ${compareOption.color}44`, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: compareOption.color }}>{compareAvg} ★</div>
+            <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>{compareOption.label} Avg</div>
+          </div>
+        )}
+        {grAvg && (
+          <div style={{ background: "white", borderRadius: 12, padding: "16px 22px", border: "1px solid #4a7c5944", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: "#4a7c59" }}>{grAvg} ★</div>
+            <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Goodreads Avg</div>
+          </div>
+        )}
+        <div style={{ background: "white", borderRadius: 12, padding: "16px 22px", border: "1px solid #ece9e3", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: compareOption.color }}>{ratedHigher}</div>
+          <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>{compareOption.label} Rated Higher</div>
+        </div>
+        <div style={{ background: "white", borderRadius: 12, padding: "16px 22px", border: "1px solid #ece9e3", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#4a7c59" }}>{grHigher}</div>
+          <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>Goodreads Rated Higher</div>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div style={{ background: "white", borderRadius: 16, border: "1px solid #ece9e3", padding: "28px 16px 16px", boxShadow: "0 2px 10px rgba(0,0,0,0.05)" }}>
+        <ResponsiveContainer width="100%" height={420}>
+          <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 80 }} barCategoryGap="25%" barGap={3}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+            <XAxis
+              dataKey="shortTitle"
+              tick={{ fontFamily: "Georgia, serif", fontSize: 11, fill: "#888" }}
+              angle={-45}
+              textAnchor="end"
+              interval={0}
+            />
+            <YAxis
+              domain={[0, 5]}
+              ticks={[1, 2, 3, 4, 5]}
+              tick={{ fontFamily: "Georgia, serif", fontSize: 11, fill: "#888" }}
+              tickFormatter={v => `${v}★`}
+            />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend
+              wrapperStyle={{ fontFamily: "Georgia, serif", fontSize: 13, paddingTop: 12 }}
+              formatter={(value) => <span style={{ color: "#444" }}>{value}</span>}
+            />
+            {compareAvg && <ReferenceLine y={parseFloat(compareAvg)} stroke={compareOption.color} strokeDasharray="4 4" strokeOpacity={0.4} />}
+            {grAvg      && <ReferenceLine y={parseFloat(grAvg)}      stroke="#4a7c59"             strokeDasharray="4 4" strokeOpacity={0.4} />}
+            <Bar dataKey={compareOption.label} fill={compareOption.color} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Goodreads"           fill="#4a7c59"             radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+        <div style={{ fontSize: 11, color: "#bbb", textAlign: "center", marginTop: 4 }}>Dashed lines show all-time averages</div>
+      </div>
+    </div>
+  );
+}
+
 export default function BookWormz() {
   const [books, setBooks] = useState([]);
   const [thumbnails, setThumbnails] = useState({});
@@ -124,6 +258,7 @@ export default function BookWormz() {
   const [sort, setSort] = useState("score");
   const [search, setSearch] = useState("");
   const [hovered, setHovered] = useState(null);
+  const [page, setPage] = useState("books"); // "books" | "insights"
 
   useEffect(() => {
     fetch(CSV_URL)
@@ -186,11 +321,26 @@ export default function BookWormz() {
       <div style={{ background: "#1a1a2e", color: "white", padding: "40px 32px 32px", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 20px)" }} />
         <div style={{ position: "relative", maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 16, marginBottom: 8 }}>
-            <span style={{ fontSize: 48 }}>📚</span>
-            <div>
-              <div style={{ fontSize: 11, letterSpacing: 4, color: "#aaa", textTransform: "uppercase", marginBottom: 4 }}>Est. 2023</div>
-              <h1 style={{ margin: 0, fontSize: 42, fontWeight: 700, letterSpacing: -1 }}>The Book Wormz</h1>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 16 }}>
+              <span style={{ fontSize: 48 }}>📚</span>
+              <div>
+                <div style={{ fontSize: 11, letterSpacing: 4, color: "#aaa", textTransform: "uppercase", marginBottom: 4 }}>Est. 2023</div>
+                <h1 style={{ margin: 0, fontSize: 42, fontWeight: 700, letterSpacing: -1 }}>The Book Wormz</h1>
+              </div>
+            </div>
+            {/* Nav buttons */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={() => setPage("books")} style={{
+                padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif",
+                background: page === "books" ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.07)",
+                color: "white",
+              }}>📚 Books</button>
+              <button onClick={() => setPage("insights")} style={{
+                padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif",
+                background: page === "insights" ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.07)",
+                color: "white",
+              }}>📊 Insights</button>
             </div>
           </div>
           <p style={{ margin: "8px 0 24px", color: "#aaa", fontSize: 15 }}>Don · Dave · Chan — {finishedBooks.length} books read and rated</p>
@@ -220,147 +370,148 @@ export default function BookWormz() {
         </div>
       </div>
 
-      {/* Currently Reading Banner */}
-      {currentlyReading.length > 0 && (
-        <div style={{ background: "linear-gradient(135deg, #1a1a2e 0%, #2d3561 100%)", borderBottom: "3px solid #f39c12" }}>
-          <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px" }}>
-            <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#f39c12", marginBottom: 16, fontWeight: 700 }}>
-              📖 Currently Reading
-            </div>
-            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-              {currentlyReading.map(book => {
-                const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
-                return (
-                  <div key={book.title} style={{ display: "flex", gap: 16, alignItems: "center", background: "rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 20px", flex: 1, minWidth: 280, border: "1px solid rgba(243,156,18,0.3)" }}>
-                    {thumbnails[book.title] ? (
-                      <img src={thumbnails[book.title]} alt={book.title} style={{ width: 52, height: 72, objectFit: "cover", borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", flexShrink: 0 }} />
-                    ) : (
-                      <div style={{ width: 52, height: 72, background: "rgba(255,255,255,0.1)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📗</div>
-                    )}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: "white", lineHeight: 1.2, marginBottom: 4 }}>{book.title}</div>
-                      {book.author && <div style={{ fontSize: 13, color: "#aaa", fontStyle: "italic", marginBottom: 8 }}>{book.author}</div>}
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
-                        {book.date && <span style={{ fontSize: 11, color: "#888" }}>Started {book.date}</span>}
-                        {book.goodreads && <span style={{ fontSize: 11, color: "#f39c12", fontWeight: 600 }}>★ {book.goodreads} on Goodreads</span>}
+      {/* Insights Page */}
+      {page === "insights" && <InsightsPage books={books} />}
+
+      {/* Books Page */}
+      {page === "books" && <>
+
+        {/* Currently Reading Banner */}
+        {currentlyReading.length > 0 && (
+          <div style={{ background: "linear-gradient(135deg, #1a1a2e 0%, #2d3561 100%)", borderBottom: "3px solid #f39c12" }}>
+            <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px" }}>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#f39c12", marginBottom: 16, fontWeight: 700 }}>
+                📖 Currently Reading
+              </div>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                {currentlyReading.map(book => {
+                  const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
+                  return (
+                    <div key={book.title} style={{ display: "flex", gap: 16, alignItems: "center", background: "rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 20px", flex: 1, minWidth: 280, border: "1px solid rgba(243,156,18,0.3)" }}>
+                      {thumbnails[book.title] ? (
+                        <img src={thumbnails[book.title]} alt={book.title} style={{ width: 52, height: 72, objectFit: "cover", borderRadius: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.4)", flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 52, height: 72, background: "rgba(255,255,255,0.1)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>📗</div>
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: "white", lineHeight: 1.2, marginBottom: 4 }}>{book.title}</div>
+                        {book.author && <div style={{ fontSize: 13, color: "#aaa", fontStyle: "italic", marginBottom: 8 }}>{book.author}</div>}
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
+                          {book.date && <span style={{ fontSize: 11, color: "#888" }}>Started {book.date}</span>}
+                          {book.goodreads && <span style={{ fontSize: 11, color: "#f39c12", fontWeight: 600 }}>★ {book.goodreads} on Goodreads</span>}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "center", flexShrink: 0 }}>
+                        <div style={{ fontSize: 28 }}>🐛</div>
+                        <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>In progress</div>
                       </div>
                     </div>
-                    <div style={{ textAlign: "center", flexShrink: 0 }}>
-                      <div style={{ fontSize: 28 }}>🐛</div>
-                      <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>In progress</div>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Controls */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px 0" }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            placeholder="Search books..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #ddd", fontSize: 14, background: "white", flex: 1, minWidth: 180, fontFamily: "Georgia, serif" }}
-          />
-          <div style={{ display: "flex", gap: 6 }}>
-            {members.map(m => (
-              <button key={m} onClick={() => setFilter(m)} style={{
-                padding: "9px 15px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif",
-                background: filter === m ? (m === "All" ? "#1a1a2e" : MEMBER_COLORS[m]?.accent) : "white",
-                color: filter === m ? "white" : "#555",
-              }}>{m}</button>
-            ))}
+        {/* Controls */}
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 32px 0" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              placeholder="Search books..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #ddd", fontSize: 14, background: "white", flex: 1, minWidth: 180, fontFamily: "Georgia, serif" }}
+            />
+            <div style={{ display: "flex", gap: 6 }}>
+              {members.map(m => (
+                <button key={m} onClick={() => setFilter(m)} style={{
+                  padding: "9px 15px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif",
+                  background: filter === m ? (m === "All" ? "#1a1a2e" : MEMBER_COLORS[m]?.accent) : "white",
+                  color: filter === m ? "white" : "#555",
+                }}>{m}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[["score", "⭐ Score"], ["title", "🔤 Title"]].map(([val, label]) => (
+                <button key={val} onClick={() => setSort(val)} style={{
+                  padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", cursor: "pointer", fontSize: 12,
+                  background: sort === val ? "#1a1a2e" : "white", color: sort === val ? "white" : "#555", fontFamily: "Georgia, serif"
+                }}>{label}</button>
+              ))}
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[["score", "⭐ Score"], ["title", "🔤 Title"]].map(([val, label]) => (
-              <button key={val} onClick={() => setSort(val)} style={{
-                padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", cursor: "pointer", fontSize: 12,
-                background: sort === val ? "#1a1a2e" : "white", color: sort === val ? "white" : "#555", fontFamily: "Georgia, serif"
-              }}>{label}</button>
-            ))}
-          </div>
+          <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {finishedBooks.length} books</div>
         </div>
-        <div style={{ fontSize: 13, color: "#888", marginTop: 10 }}>Showing {sorted.length} of {finishedBooks.length} books</div>
-      </div>
 
-      {/* Grid */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "16px 32px 48px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 18 }}>
-          {sorted.map((book) => {
-            const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
-            const isHovered = hovered === book.title;
-            const thumb = thumbnails[book.title];
-            return (
-              <div key={book.title}
-                onMouseEnter={() => setHovered(book.title)}
-                onMouseLeave={() => setHovered(null)}
-                style={{
-                  background: "white", borderRadius: 14, overflow: "hidden",
-                  boxShadow: isHovered ? "0 8px 28px rgba(0,0,0,0.13)" : "0 2px 10px rgba(0,0,0,0.06)",
-                  border: "1px solid #ece9e3",
-                  transform: isHovered ? "translateY(-3px)" : "none",
-                  transition: "all 0.2s"
-                }}>
-                <div style={{ height: 5, background: color.accent }} />
-                <div style={{ padding: "16px 18px 18px" }}>
-
-                  {/* Cover + title row */}
-                  <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
-                    <div style={{ flexShrink: 0 }}>
-                      {thumb ? (
-                        <img
-                          src={thumb}
-                          alt={book.title}
-                          style={{ width: 68, height: 100, objectFit: "cover", borderRadius: 4, boxShadow: "0 3px 10px rgba(0,0,0,0.2)" }}
-                          onError={e => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
-                        />
-                      ) : null}
-                      <div style={{
-                        width: 68, height: 100, background: `linear-gradient(135deg, ${color.accent}33, ${color.accent}66)`,
-                        borderRadius: 4, display: thumb ? "none" : "flex",
-                        alignItems: "center", justifyContent: "center", fontSize: 28,
-                        boxShadow: "0 3px 10px rgba(0,0,0,0.1)", border: `1px solid ${color.accent}44`
-                      }}>📚</div>
-                    </div>
-
-                    {/* Title / author / meta */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <h3 style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 700, lineHeight: 1.3 }}>{book.title}</h3>
-                      {book.author && <div style={{ fontSize: 12, color: "#888", fontStyle: "italic", marginBottom: 3 }}>{book.author}</div>}
-                      {book.year && <div style={{ fontSize: 11, color: "#bbb", marginBottom: 8 }}>Published {book.year}</div>}
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                        <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
-                        <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
+        {/* Grid */}
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "16px 32px 48px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 18 }}>
+            {sorted.map((book) => {
+              const color = MEMBER_COLORS[book.picker] || MEMBER_COLORS["Don"];
+              const isHovered = hovered === book.title;
+              const thumb = thumbnails[book.title];
+              return (
+                <div key={book.title}
+                  onMouseEnter={() => setHovered(book.title)}
+                  onMouseLeave={() => setHovered(null)}
+                  style={{
+                    background: "white", borderRadius: 14, overflow: "hidden",
+                    boxShadow: isHovered ? "0 8px 28px rgba(0,0,0,0.13)" : "0 2px 10px rgba(0,0,0,0.06)",
+                    border: "1px solid #ece9e3",
+                    transform: isHovered ? "translateY(-3px)" : "none",
+                    transition: "all 0.2s"
+                  }}>
+                  <div style={{ height: 5, background: color.accent }} />
+                  <div style={{ padding: "16px 18px 18px" }}>
+                    <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
+                      <div style={{ flexShrink: 0 }}>
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt={book.title}
+                            style={{ width: 68, height: 100, objectFit: "cover", borderRadius: 4, boxShadow: "0 3px 10px rgba(0,0,0,0.2)" }}
+                            onError={e => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
+                          />
+                        ) : null}
+                        <div style={{
+                          width: 68, height: 100, background: `linear-gradient(135deg, ${color.accent}33, ${color.accent}66)`,
+                          borderRadius: 4, display: thumb ? "none" : "flex",
+                          alignItems: "center", justifyContent: "center", fontSize: 28,
+                          boxShadow: "0 3px 10px rgba(0,0,0,0.1)", border: `1px solid ${color.accent}44`
+                        }}>📚</div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 700, lineHeight: 1.3 }}>{book.title}</h3>
+                        {book.author && <div style={{ fontSize: 12, color: "#888", fontStyle: "italic", marginBottom: 3 }}>{book.author}</div>}
+                        {book.year && <div style={{ fontSize: 11, color: "#bbb", marginBottom: 8 }}>Published {book.year}</div>}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ fontSize: 11, padding: "3px 9px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 700 }}>📖 {book.picker}'s pick</span>
+                          <span style={{ fontSize: 11, color: "#aaa" }}>{book.date}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-
-                  {/* Scores */}
-                  <div style={{ marginBottom: 10 }}>
-                    <ScoreRow stars={book.avg} name="🐛 Book Wormz" />
-                    {book.goodreads !== null && (
-                      <ScoreRow stars={book.goodreads} name="📗 Goodreads" color="#4a7c59" />
-                    )}
-                  </div>
-
-                  <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
-                    <div style={{ fontSize: 10, color: "#bbb", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Individual Scores</div>
-                    <ScoreRow stars={book.don}  name="Don"  color={MEMBER_COLORS.Don.accent}  />
-                    <ScoreRow stars={book.dave} name="Dave" color={MEMBER_COLORS.Dave.accent} />
-                    <ScoreRow stars={book.chan}  name="Chan" color={MEMBER_COLORS.Chan.accent} />
+                    <div style={{ marginBottom: 10 }}>
+                      <ScoreRow stars={book.avg} name="🐛 Book Wormz" />
+                      {book.goodreads !== null && (
+                        <ScoreRow stars={book.goodreads} name="📗 Goodreads" color="#4a7c59" />
+                      )}
+                    </div>
+                    <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}>
+                      <div style={{ fontSize: 10, color: "#bbb", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Individual Scores</div>
+                      <ScoreRow stars={book.don}  name="Don"  color={MEMBER_COLORS.Don.accent}  />
+                      <ScoreRow stars={book.dave} name="Dave" color={MEMBER_COLORS.Dave.accent} />
+                      <ScoreRow stars={book.chan}  name="Chan" color={MEMBER_COLORS.Chan.accent} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+          {sorted.length === 0 && <div style={{ textAlign: "center", padding: 60, color: "#aaa", fontSize: 18 }}>No books found 📚</div>}
         </div>
-        {sorted.length === 0 && <div style={{ textAlign: "center", padding: 60, color: "#aaa", fontSize: 18 }}>No books found 📚</div>}
-      </div>
+      </>}
+
       <div style={{ textAlign: "center", padding: "0 0 32px", color: "#bbb", fontSize: 12 }}>The Book Wormz · Built with Claude</div>
     </div>
   );
