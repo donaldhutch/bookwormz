@@ -26,14 +26,29 @@ const starColor = (stars) => {
   return "#e74c3c";
 };
 
-const StarDisplay = ({ stars }) => {
+const StarDisplay = ({ stars, size = 13, color }) => {
   if (stars === null) return null;
-  const full  = Math.floor(stars);
-  const half  = stars - full >= 0.25 && stars - full < 0.75;
-  const empty = 5 - full - (half ? 1 : 0);
+  const starColor_ = color || starColor(stars);
   return (
-    <span style={{ fontSize: 13, letterSpacing: 1 }}>
-      {"★".repeat(full)}{half ? "½" : ""}{"☆".repeat(empty)}
+    <span style={{ display: "inline-flex", gap: 1 }}>
+      {[1, 2, 3, 4, 5].map(i => {
+        const fill = Math.min(1, Math.max(0, stars - (i - 1)));
+        const pct  = Math.round(fill * 100);
+        return (
+          <span key={i} style={{ position: "relative", display: "inline-block", fontSize: size, lineHeight: 1 }}>
+            {/* Empty star base */}
+            <span style={{ color: "#ddd" }}>★</span>
+            {/* Filled overlay clipped to fill % */}
+            {pct > 0 && (
+              <span style={{
+                position: "absolute", left: 0, top: 0,
+                width: `${pct}%`, overflow: "hidden", color: starColor_,
+                whiteSpace: "nowrap",
+              }}>★</span>
+            )}
+          </span>
+        );
+      })}
     </span>
   );
 };
@@ -48,7 +63,7 @@ const ScoreRow = ({ stars, name, color }) => {
     <div style={{ marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
       <span style={{ fontSize: 11, fontWeight: 600, color: "#555" }}>{name}</span>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ color: color || starColor(stars) }}><StarDisplay stars={stars} /></span>
+        <StarDisplay stars={stars} color={color || starColor(stars)} />
         <span style={{ fontSize: 12, fontWeight: 700, color: color || starColor(stars) }}>{stars.toFixed(2)}</span>
       </div>
     </div>
