@@ -335,6 +335,220 @@ function BookModal({ book, onClose, onSaved }) {
   );
 }
 
+
+// ─── HISTORY PAGE ─────────────────────────────────────────────────────────────
+
+function HistoryPage({ books, memberName }) {
+  const [posts, setPosts]         = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showForm, setShowForm]   = useState(false);
+  const [bookId, setBookId]       = useState("");
+  const [title, setTitle]         = useState("");
+  const [url, setUrl]             = useState("");
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [postType, setPostType]   = useState("link"); // "link" | "image"
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState(null);
+
+  const loadPosts = async () => {
+    const { data } = await supabase.from("posts").select("*, books(title)").order("created_at", { ascending: false });
+    setPosts(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadPosts(); }, []);
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
+
+  const resetForm = () => {
+    setUrl(""); setTitle(""); setBookId("");
+    setImageFile(null); setImagePreview(null);
+    setPostType("link"); setShowForm(false); setError(null);
+  };
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    setError(null);
+
+    let imageUrl = null;
+
+    // Upload image if provided
+    if (postType === "image") {
+      if (!imageFile) return setError("Please select an image.") || setSaving(false);
+      const ext      = imageFile.name.split(".").pop();
+      const filename = `${Date.now()}-${memberName}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("post-images")
+        .upload(filename, imageFile, { contentType: imageFile.type });
+      if (uploadErr) { setError(uploadErr.message); setSaving(false); return; }
+      const { data: { publicUrl } } = supabase.storage.from("post-images").getPublicUrl(filename);
+      imageUrl = publicUrl;
+    } else {
+      if (!url.trim()) { setError("URL is required."); setSaving(false); return; }
+    }
+
+    const { error: err } = await supabase.from("posts").insert({
+      book_id:     bookId || null,
+      member_name: memberName,
+      title:       title.trim() || null,
+      url:         postType === "link" ? url.trim() : null,
+      image_url:   imageUrl,
+    });
+
+    if (err) { setError(err.message); setSaving(false); return; }
+    resetForm();
+    loadPosts();
+    setSaving(false);
+  };
+
+  const handleDelete = async (id, imageUrl) => {
+    if (!window.confirm("Delete this post?")) return;
+    // Delete image from storage if it exists
+    if (imageUrl) {
+      const filename = imageUrl.split("/").pop();
+      await supabase.storage.from("post-images").remove([filename]);
+    }
+    await supabase.from("posts").delete().eq("id", id);
+    loadPosts();
+  };
+
+  const formatDate = (ts) => new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+  const getLinkPreview = (url) => {
+    try {
+      const u = new URL(url);
+      if (u.hostname.includes("youtube.com") || u.hostname.includes("youtu.be")) return { icon: "🎬", label: "YouTube Video" };
+      if (u.hostname.includes("docs.google.com") && url.includes("presentation")) return { icon: "📊", label: "Google Slides" };
+      if (u.hostname.includes("docs.google.com")) return { icon: "📄", label: "Google Doc" };
+      if (u.hostname.includes("drive.google.com")) return { icon: "📁", label: "Google Drive" };
+      if (u.hostname.includes("dropbox.com")) return { icon: "📦", label: "Dropbox" };
+      if (u.hostname.includes("photos.google.com") || u.hostname.includes("photo")) return { icon: "📷", label: "Photos" };
+      if (u.hostname.includes("vimeo.com")) return { icon: "🎬", label: "Vimeo Video" };
+      return { icon: "🔗", label: u.hostname };
+    } catch { return { icon: "🔗", label: "Link" }; }
+  };
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 32px 64px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <h2 style={{ fontSize: 26, fontWeight: 700, color: "#1a1a2e", margin: 0 }}>📜 Group History</h2>
+        <button onClick={() => { setShowForm(!showForm); if (showForm) resetForm(); }} style={{
+          padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer",
+          fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif",
+          background: showForm ? "#eee" : "#1a1a2e", color: showForm ? "#555" : "white"
+        }}>{showForm ? "Cancel" : "➕ Add Post"}</button>
+      </div>
+      <p style={{ color: "#888", fontSize: 14, marginBottom: 28 }}>Videos, slides, photos and memories — members only.</p>
+
+      {/* Add post form */}
+      {showForm && (
+        <div style={{ background: "white", borderRadius: 14, padding: 24, border: "1px solid #ece9e3", boxShadow: "0 2px 10px rgba(0,0,0,0.06)", marginBottom: 28 }}>
+
+          {/* Post type toggle */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            {[["link", "🔗 Link"], ["image", "📷 Photo"]].map(([type, label]) => (
+              <button key={type} onClick={() => setPostType(type)} style={{
+                padding: "8px 18px", borderRadius: 8, border: `2px solid ${postType === type ? "#1a1a2e" : "#ddd"}`,
+                background: postType === type ? "#1a1a2e" : "white",
+                color: postType === type ? "white" : "#888",
+                cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif"
+              }}>{label}</button>
+            ))}
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 5 }}>Book (optional)</label>
+            <select value={bookId} onChange={e => setBookId(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 14, fontFamily: "Georgia, serif", background: "white" }}>
+              <option value="">— General / no specific book —</option>
+              {[...books].sort((a,b) => a.title.localeCompare(b.title)).map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 5 }}>Title (optional)</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder={postType === "image" ? "e.g. Book club night photos" : "e.g. Band of Brothers discussion video"}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 14, fontFamily: "Georgia, serif", boxSizing: "border-box" }} />
+          </div>
+
+          {postType === "link" ? (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 5 }}>URL *</label>
+              <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://..."
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 14, fontFamily: "Georgia, serif", boxSizing: "border-box" }} />
+            </div>
+          ) : (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: 1, display: "block", marginBottom: 5 }}>Photo *</label>
+              <input type="file" accept="image/*" onChange={handleImageChange}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #ddd", fontSize: 14, fontFamily: "Georgia, serif", boxSizing: "border-box", background: "white" }} />
+              {imagePreview && (
+                <img src={imagePreview} alt="Preview" style={{ marginTop: 12, maxWidth: "100%", maxHeight: 240, borderRadius: 8, objectFit: "cover", border: "1px solid #eee" }} />
+              )}
+            </div>
+          )}
+
+          {error && <div style={{ color: "#e74c3c", fontSize: 13, marginBottom: 12 }}>{error}</div>}
+          <button onClick={handleSubmit} disabled={saving} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "#1a1a2e", color: "white", cursor: "pointer", fontFamily: "Georgia, serif", fontWeight: 600 }}>
+            {saving ? "Uploading..." : "Post"}
+          </button>
+        </div>
+      )}
+
+      {/* Feed */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "#aaa" }}>Loading...</div>
+      ) : posts.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60, color: "#aaa", fontSize: 16 }}>No posts yet — add the first one! 📎</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {posts.map(post => {
+            const color = MEMBER_COLORS[post.member_name] || MEMBER_COLORS["Don"];
+            const isPhoto = !!post.image_url;
+            const preview = !isPhoto && post.url ? getLinkPreview(post.url) : null;
+            return (
+              <div key={post.id} style={{ background: "white", borderRadius: 14, border: "1px solid #ece9e3", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", overflow: "hidden" }}>
+                {/* Photo */}
+                {isPhoto && (
+                  <img src={post.image_url} alt={post.title || "Photo"} style={{ width: "100%", maxHeight: 400, objectFit: "cover", display: "block" }} />
+                )}
+                <div style={{ padding: "16px 20px", display: "flex", gap: 14, alignItems: "flex-start" }}>
+                  {!isPhoto && <div style={{ fontSize: 28, flexShrink: 0, marginTop: 2 }}>{preview?.icon}</div>}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {!isPhoto && post.url ? (
+                      <a href={post.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 15, fontWeight: 700, color: "#1a1a2e", textDecoration: "none", display: "block", marginBottom: 6, wordBreak: "break-word" }}>
+                        {post.title || preview?.label}
+                      </a>
+                    ) : post.title ? (
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a2e", marginBottom: 6 }}>{post.title}</div>
+                    ) : null}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      {post.books?.title && (
+                        <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#f0f0f0", color: "#666" }}>📚 {post.books.title}</span>
+                      )}
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: color.bg, color: color.text, fontWeight: 600 }}>{post.member_name}</span>
+                      <span style={{ fontSize: 11, color: "#bbb" }}>{formatDate(post.created_at)}</span>
+                      {isPhoto && (
+                        <a href={post.image_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#aaa", textDecoration: "none" }}>View full size ↗</a>
+                      )}
+                    </div>
+                  </div>
+                  <button onClick={() => handleDelete(post.id, post.image_url)} style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: "#ddd", fontSize: 16, padding: 4 }} title="Delete">✕</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
 export default function BookWormz() {
@@ -522,6 +736,7 @@ export default function BookWormz() {
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button onClick={() => setPage("books")} style={{ padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif", background: page === "books" ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.07)", color: "white" }}>📚 Books</button>
               <button onClick={() => setPage("insights")} style={{ padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif", background: page === "insights" ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.07)", color: "white" }}>📊 Insights</button>
+              {session && <button onClick={() => setPage("history")} style={{ padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif", background: page === "history" ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.07)", color: "white" }}>📜 History</button>}
               {session ? (
                 <>
                   <button onClick={() => setShowScoreModal(true)} style={{ padding: "10px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "Georgia, serif", background: "#f39c12", color: "white" }}>✏️ Submit Score</button>
@@ -565,6 +780,9 @@ export default function BookWormz() {
 
       {/* Insights page */}
       {page === "insights" && <InsightsPage books={enrichedBooks} />}
+
+      {/* History page — members only */}
+      {page === "history" && session && <HistoryPage books={enrichedBooks} memberName={member?.name} />}
 
       {/* Books page */}
       {page === "books" && <>
